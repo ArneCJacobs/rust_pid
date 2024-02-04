@@ -32,6 +32,8 @@ struct PIDConfiguration<D> {
 
     derivate_measurement: DerivativeMeasurement,
 
+    integral_stored: Option<D>,
+
     prev_error: Option<D>,
     prev_value: Option<D>,
     prev_result: Option<D>,
@@ -54,7 +56,8 @@ impl<D> Default for PIDConfiguration<D> {
         Self {
             proportional_gain: 1.0,
             derivative_gain: 1.0,
-            integral_gain: 0.0,
+            integral_gain: 1.0,
+            integral_stored: None,
             derivate_measurement: DerivativeMeasurement::Velocity,
             prev_error: None,
             prev_value: None,
@@ -95,7 +98,7 @@ impl<D> PIDConfiguration<D>
 {
     pub fn update(&mut self, dt: f32, current_value: D, target_value: D) -> D {
         let error = target_value - current_value;
-
+        let mut integral = self.integral_stored.unwrap_or(D::default());
 
         let proportional = error * self.proportional_gain;
 
@@ -116,6 +119,8 @@ impl<D> PIDConfiguration<D>
             // println!("error: {:.5?}, prev_error: {:.5?}, error - prev_error: {:.5?}, derivative: {:.5?}", error, prev_error, error - prev_error, derivative);
         }
 
+        integral = integral + error * dt;
+
 
         self.error_history.push(error);
         if self.error_history.len() > MAX_PLOT_LENGTH {
@@ -129,17 +134,22 @@ impl<D> PIDConfiguration<D>
         if self.derivative_history.len() > MAX_PLOT_LENGTH {
             self.derivative_history.remove(0);
         }
+        self.integral_history.push(integral * self.integral_gain);
+        if self.integral_history.len() > MAX_PLOT_LENGTH {
+            self.integral_history.remove(0);
+        }
         self.prev_error = Some(error);
         self.prev_value = Some(current_value);
 
 
-        let result = proportional + derivative;
+        let result = proportional + derivative + integral * self.integral_gain;
         self.result_history.push(result);
         if self.result_history.len() > MAX_PLOT_LENGTH {
             self.result_history.remove(0);
         }
 
         self.prev_result = Some(result);
+        self.integral_stored = Some(integral);
         result
     }
 
@@ -198,7 +208,7 @@ fn main() {
         .register_type::<Config>() // you need to register your type to display it
         .add_plugins(ResourceInspectorPlugin::<Config>::default())
 
-        .insert_resource(Gravity(Vec3::new(0.0, 0.0, 0.0)))
+        // .insert_resource(Gravity(Vec3::new(0.0, 0.0, 0.0)))
         // .insert_resource(Time::new_with(Physics::fixed_hz(144.0)))
         .add_systems(Startup, setup)
         .add_systems(
@@ -260,6 +270,7 @@ fn update_pid_plot(
                 plot_ui.line(get_line_from_data("Proportional", &pid_config.proportional_history));
                 plot_ui.line(get_line_from_data("Derivative", &pid_config.derivative_history));
                 plot_ui.line(get_line_from_data("Result", &pid_config.result_history));
+                plot_ui.line(get_line_from_data("Integral", &pid_config.integral_history));
 
             });
 
@@ -335,7 +346,7 @@ fn update(
     for (position, mut force, velocity) in cube_query.iter_mut() {
         // let force_vector = (Vec3::Y * 10.0) * (time.elapsed_seconds() / 2.0).sin().abs();
         // println!("position: {:?}, force_fector: {:?}", position.0, force);
-        println!("position: {:?}, velocity: {:?}, force_fector: {:?}", position.0, velocity.0, force);
+        // println!("position: {:?}, velocity: {:?}, force_fector: {:?}", position.0, velocity.0, force);
         let correction = pid_controller.update(
             time.delta_seconds(),
             position.0.y,
