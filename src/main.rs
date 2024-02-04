@@ -196,9 +196,9 @@ fn main() {
         .add_plugins(bevy_inspector_egui::DefaultInspectorConfigPlugin)
         // .add_plugins(WorldInspectorPlugin::new())
 
-        .init_resource::<PIDConfiguration<f32>>() // `ResourceInspectorPlugin` won't initialize the resource
-        .register_type::<PIDConfiguration<f32>>() // you need to register your type to display it
-        .add_plugins(ResourceInspectorPlugin::<PIDConfiguration<f32>>::default())
+        .init_resource::<PIDConfiguration<Vec3>>() // `ResourceInspectorPlugin` won't initialize the resource
+        .register_type::<PIDConfiguration<Vec3>>() // you need to register your type to display it
+        .add_plugins(ResourceInspectorPlugin::<PIDConfiguration<Vec3>>::default())
 
         .init_resource::<TargetConfiguration>() // `ResourceInspectorPlugin` won't initialize the resource
         .register_type::<TargetConfiguration>() // you need to register your type to display it
@@ -244,8 +244,13 @@ fn pause_system(
     }
 }
 
-fn get_line_from_data(name: &'_ str, data: &[f32]) -> Line {
+fn get_line_from_scalar_data(name: &'_ str, data: &[f32]) -> Line {
   let points = PlotPoints::from_ys_f32(data);
+  Line::new(points).name(name)
+}
+
+fn get_line_from_vec_data(name: &'_ str, data: &[Vec3]) -> Line {
+  let points = PlotPoints::from_ys_f32(&data.iter().map(|v| v.magnitude()).collect::<Vec<_>>());
   Line::new(points).name(name)
 }
 
@@ -259,18 +264,18 @@ fn update_pid_plot(
         return;
     };
     let mut egui_context = egui_context.clone();
-    let pid_config = world.get_resource::<PIDConfiguration<f32>>().unwrap();
+    let pid_config = world.get_resource::<PIDConfiguration<Vec3>>().unwrap();
 
     egui::Window::new("PID Controller")
         .show(egui_context.get_mut(), |ui| {
             let plot = Plot::new("Components history")
                 .legend(Legend::default());
             plot.show(ui, |plot_ui| {
-                plot_ui.line(get_line_from_data("Error", &pid_config.error_history));
-                plot_ui.line(get_line_from_data("Proportional", &pid_config.proportional_history));
-                plot_ui.line(get_line_from_data("Derivative", &pid_config.derivative_history));
-                plot_ui.line(get_line_from_data("Result", &pid_config.result_history));
-                plot_ui.line(get_line_from_data("Integral", &pid_config.integral_history));
+                plot_ui.line(get_line_from_vec_data("Error", &pid_config.error_history));
+                plot_ui.line(get_line_from_vec_data("Proportional", &pid_config.proportional_history));
+                plot_ui.line(get_line_from_vec_data("Derivative", &pid_config.derivative_history));
+                plot_ui.line(get_line_from_vec_data("Result", &pid_config.result_history));
+                plot_ui.line(get_line_from_vec_data("Integral", &pid_config.integral_history));
 
             });
 
@@ -339,21 +344,21 @@ fn update(
     mut cube_query: Query<(&Position, &mut ExternalImpulse, &LinearVelocity), With<CubeTag>>,
     time: Res<Time>,
     mut gizmos: Gizmos,
-    mut pid_controller: ResMut<PIDConfiguration<f32>>,
+    mut pid_controller: ResMut<PIDConfiguration<Vec3>>,
     target_config: Res<TargetConfiguration>,
 ) {
     let force_vector = Vec3::Y * 1.0;
-    for (position, mut force, velocity) in cube_query.iter_mut() {
+    for (position, mut force, _velocity) in cube_query.iter_mut() {
         // let force_vector = (Vec3::Y * 10.0) * (time.elapsed_seconds() / 2.0).sin().abs();
         // println!("position: {:?}, force_fector: {:?}", position.0, force);
         // println!("position: {:?}, velocity: {:?}, force_fector: {:?}", position.0, velocity.0, force);
         let correction = pid_controller.update(
             time.delta_seconds(),
-            position.0.y,
-            target_config.target_position.y,
+            position.0,
+            target_config.target_position,
         );
         // force.set_force(correction * force_vector);
-        force.set_impulse(correction*force_vector);
+        force.set_impulse(correction);
         // force.set_force(force_vector);
         gizmos.ray(position.0, force.impulse(), Color::rgb(1.0, 1.0, 1.0));
     }
