@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use angle::Angle;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_xpbd_3d::{prelude::*, PhysicsSchedule, PhysicsStepSet};
@@ -9,6 +10,8 @@ use bevy_inspector_egui::{
     InspectorOptions,
 };
 use egui_plot::{Plot, Legend, Line, PlotPoints};
+
+mod angle;
 
 
 #[derive(Default, Reflect, Resource, InspectorOptions)]
