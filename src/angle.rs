@@ -1,4 +1,4 @@
-use crate::Magnitude;
+use crate::pid_configuration::Magnitude;
 
 
 #[derive(Copy, Clone, Default, Debug)]

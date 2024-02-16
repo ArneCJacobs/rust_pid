@@ -2,168 +2,28 @@ use core::fmt::Debug;
 use angle::Angle;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy_xpbd_3d::{prelude::*, PhysicsSchedule, PhysicsStepSet};
-use bevy_egui::{EguiPlugin, EguiContext, egui};
+use bevy_xpbd_3d::{PhysicsSchedule, PhysicsStepSet, prelude::*};
+use bevy_egui::{egui, EguiContext, EguiPlugin};
 use bevy_inspector_egui::{
+    InspectorOptions,
     prelude::ReflectInspectorOptions,
     quick::{ResourceInspectorPlugin, WorldInspectorPlugin},
-    InspectorOptions,
 };
-use egui_plot::{Plot, Legend, Line, PlotPoints};
+use egui_plot::{Legend, Line, Plot, PlotPoints};
+use pid_configuration::{Magnitude, PIDConfiguration};
+use systems::plot;
 
 mod angle;
+mod pid_configuration;
+mod systems;
 
+const MAX_PLOT_LENGTH: usize = 200;
 
 #[derive(Default, Reflect, Resource, InspectorOptions)]
 #[reflect(Resource, InspectorOptions)]
 enum DerivativeMeasurement {
     #[default] Velocity,
     ErrorRateOfChange,
-}
-
-#[derive(Reflect, Resource, InspectorOptions)]
-#[reflect(Resource, InspectorOptions)]
-struct PIDConfiguration<D> {
-    #[inspector(min = 0.0, max = 10.0)]
-    proportional_gain: f32,
-
-    #[inspector(min = 0.0, max = 10.0)]
-    derivative_gain: f32,
-
-    #[inspector(min = 0.0, max = 10.0)]
-    integral_gain: f32,
-
-    derivate_measurement: DerivativeMeasurement,
-
-    integral_stored: Option<D>,
-
-    prev_error: Option<D>,
-    prev_value: Option<D>,
-    prev_result: Option<D>,
-
-    #[reflect(ignore)]
-    error_history: Vec<D>,
-    #[reflect(ignore)]
-    proportional_history: Vec<D>,
-    #[reflect(ignore)]
-    integral_history: Vec<D>,
-    #[reflect(ignore)]
-    derivative_history: Vec<D>,
-
-    #[reflect(ignore)]
-    result_history: Vec<D>,
-}
-
-impl<D> Default for PIDConfiguration<D> {
-    fn default() -> Self {
-        Self {
-            proportional_gain: 1.0,
-            derivative_gain: 1.0,
-            integral_gain: 1.0,
-            integral_stored: None,
-            derivate_measurement: DerivativeMeasurement::Velocity,
-            prev_error: None,
-            prev_value: None,
-            prev_result: None,
-            error_history: Vec::new(),
-            proportional_history: Vec::new(),
-            integral_history: Vec::new(),
-            derivative_history: Vec::new(),
-            result_history: Vec::new(),
-        }
-    }
-}
-
-trait Magnitude {
-    fn magnitude(&self) -> f32;
-}
-
-impl Magnitude for Vec3 {
-    fn magnitude(&self) -> f32 {
-        self.length()
-    }
-}
-impl Magnitude for f32 {
-    fn magnitude(&self) -> f32 {
-        self.abs()
-    }
-}
-
-impl<D> PIDConfiguration<D> 
-    where D: std::ops::Sub<Output = D> + 
-             std::ops::Add<Output = D> +
-             std::ops::Div<f32, Output = D> + 
-             std::ops::Neg<Output = D> + 
-             std::ops::Mul<f32, Output = D> +
-             Copy + Default + Debug +
-             Magnitude, 
-
-{
-    pub fn update(&mut self, dt: f32, current_value: D, target_value: D) -> D {
-        let error = target_value - current_value;
-        let mut integral = self.integral_stored.unwrap_or(D::default());
-
-        let proportional = error * self.proportional_gain;
-
-        let mut derivative = D::default();
-
-        if let Some(prev_error) = self.prev_error {
-
-            let prev_value = self.prev_value.unwrap_or(current_value);
-            derivative = match self.derivate_measurement {
-                DerivativeMeasurement::Velocity => -(current_value - prev_value) / dt,
-                DerivativeMeasurement::ErrorRateOfChange => (error - prev_error) / dt,
-            } * self.derivative_gain;
-            if derivative.magnitude() < 1e-5 {
-                derivative = self.derivative_history.last().copied().unwrap();
-                // println!("derivative: {:?}", derivative);
-            }
-
-            // println!("error: {:.5?}, prev_error: {:.5?}, error - prev_error: {:.5?}, derivative: {:.5?}", error, prev_error, error - prev_error, derivative);
-        }
-
-        integral = integral + error * dt;
-
-
-        self.error_history.push(error);
-        if self.error_history.len() > MAX_PLOT_LENGTH {
-            self.error_history.remove(0);
-        }
-        self.proportional_history.push(proportional);
-        if self.proportional_history.len() > MAX_PLOT_LENGTH {
-            self.proportional_history.remove(0);
-        }
-        self.derivative_history.push(derivative);
-        if self.derivative_history.len() > MAX_PLOT_LENGTH {
-            self.derivative_history.remove(0);
-        }
-        self.integral_history.push(integral * self.integral_gain);
-        if self.integral_history.len() > MAX_PLOT_LENGTH {
-            self.integral_history.remove(0);
-        }
-        self.prev_error = Some(error);
-        self.prev_value = Some(current_value);
-
-
-        let result = proportional + derivative + integral * self.integral_gain;
-        self.result_history.push(result);
-        if self.result_history.len() > MAX_PLOT_LENGTH {
-            self.result_history.remove(0);
-        }
-
-        self.prev_result = Some(result);
-        self.integral_stored = Some(integral);
-        result
-    }
-
-    // Reset the PID controller. Needs to be called if the target is moved (e.g. when it is teleported) or if the PID was disabled for a long time.
-    pub fn reset(&mut self) {
-        self.prev_error = None;
-        self.prev_value = None;
-        self.error_history.clear();
-        self.proportional_history.clear();
-        self.derivative_history.clear();
-    }
 }
 
 #[derive(Reflect, Resource, InspectorOptions)]
@@ -183,7 +43,7 @@ impl Default for TargetConfiguration {
 #[derive(Reflect, Clone, Copy, Component, Debug, Default, PartialEq, Eq)]
 struct CubeTag;
 
-const MAX_PLOT_LENGTH: usize = 200;
+
 
 #[derive(Reflect, Resource, InspectorOptions, Default)]
 #[reflect(Resource, InspectorOptions)]
@@ -227,7 +87,7 @@ fn main() {
                 .before(PhysicsStepSet::SpatialQuery)
         )
         .add_systems(Update, draw_target)
-        .add_systems(Update, update_pid_plot)
+        .add_systems(Update, plot::update_pid_plot)
         .add_systems(Update, pause_system)
         .run();
 }
@@ -245,44 +105,6 @@ fn pause_system(
     } else {
         time.unpause();
     }
-}
-
-fn get_line_from_scalar_data(name: &'_ str, data: &[f32]) -> Line {
-  let points = PlotPoints::from_ys_f32(data);
-  Line::new(points).name(name)
-}
-
-fn get_line_from_vec_data(name: &'_ str, data: &[Vec3]) -> Line {
-  let points = PlotPoints::from_ys_f32(&data.iter().map(|v| v.magnitude()).collect::<Vec<_>>());
-  Line::new(points).name(name)
-}
-
-fn update_pid_plot(
-    world: &mut World,
-) {
-    let Ok(egui_context) = world
-        .query_filtered::<&mut EguiContext, With<PrimaryWindow>>()
-        .get_single(world)
-    else {
-        return;
-    };
-    let mut egui_context = egui_context.clone();
-    let pid_config = world.get_resource::<PIDConfiguration<Vec3>>().unwrap();
-
-    egui::Window::new("PID Controller")
-        .show(egui_context.get_mut(), |ui| {
-            let plot = Plot::new("Components history")
-                .legend(Legend::default());
-            plot.show(ui, |plot_ui| {
-                plot_ui.line(get_line_from_vec_data("Error", &pid_config.error_history));
-                plot_ui.line(get_line_from_vec_data("Proportional", &pid_config.proportional_history));
-                plot_ui.line(get_line_from_vec_data("Derivative", &pid_config.derivative_history));
-                plot_ui.line(get_line_from_vec_data("Result", &pid_config.result_history));
-                plot_ui.line(get_line_from_vec_data("Integral", &pid_config.integral_history));
-
-            });
-
-        });
 }
 
 fn setup(
